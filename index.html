@@ -11,8 +11,16 @@
     <script src="https://d3js.org/d3.v6.js"></script>
 
     <script>
+        const w = 1200;
+        const h = 700;
+        const margin = {
+            top: 50,
+            bottom: 80,
+            left: 120,
+            right: 40
+        };
 
-        function getMax (someMap) {
+        function getMax(someMap) {
             var maxValue = null;
             for (var [key, value] of someMap) {
                 maxValue = (!maxValue || maxValue < value) ? value : maxValue;
@@ -20,7 +28,7 @@
             return maxValue;
         }
 
-        function getMin (someMap) {
+        function getMin(someMap) {
             var minValue = null;
             for (var [key, value] of someMap) {
                 minValue = (!minValue || minValue > value) ? value : minValue;
@@ -42,6 +50,22 @@
         // Data and color scale
         const data = new Map();
 
+
+        const colorScale = d3.scaleThreshold()
+            .range(d3.schemeBuPu[9]);  //.domain is in plot()
+
+        //Chart x-scale
+        //Use rangeRound() instead of range()-- values output by the scale will be rounded to the nearest whole number. 
+        //This gives shapes exact pixel values (avoids fuzzy edges).
+        const x = d3.scaleLinear()
+            .rangeRound([600, 860]);
+
+        const legendAxis = d3.axisBottom(x)        //.tickValues() is in plot
+            .tickFormat(d3.format(".0f"))
+            .tickSize(15)
+            .tickPadding(10)
+            .tickSizeOuter(0);
+
         // Load external data and boot
         Promise.all([d3.json("https://raw.githubusercontent.com/Chi-Loong/HASS02.526/master/assignments/sgmap.json"),
         d3.csv("https://raw.githubusercontent.com/Chi-Loong/HASS02.526/master/assignments/population2021.csv", function (d) {
@@ -54,7 +78,7 @@
             console.log(csvData[1]);
             let topo = csvData[0]
 
-            console.log( "data", data)
+            console.log("data", data)
             console.log(data.get('henderson hill'))
 
             const min = getMin(data)
@@ -62,32 +86,42 @@
             console.log(min); // 👉️ 3
             console.log(max); // 👉️ 8
 
-            const colorScale = d3.scaleLinear()
-                .domain([min, max])
-                .range(d3.schemeBlues[3]);
 
-            let mouseOver = function (d) {
-                d3.selectAll(".Country")
-                    .transition()
-                    .duration(200)
-                    .style("opacity", .5)
-                d3.select(this)
-                    .transition()
-                    .duration(200)
+            x.domain([min, max])
+            colorScale.domain(d3.range(min, max, (max - min) / 8));
+            legendAxis.tickValues(colorScale.domain());
+
+            // create a tooltip
+            var tooltip = d3.select('body')
+                .append("div")
+                .style("opacity", 1)
+                .attr("class", "tooltip")
+                .style("position", 'absolute')
+                .style("background-color", "white")
+                .style("border", "solid")
+                .style("border-width", "2px")
+                .style("border-radius", "5px")
+                .style("padding", "5px")
+            // .style("z-index", 999)
+
+            // Three function that change the tooltip when user hover / move / leave a cell
+            const mouseover = function (event, d) {
+                tooltip
                     .style("opacity", 1)
-                    .style("stroke", "black")
             }
-
-            let mouseLeave = function (d) {
-                // d3.selectAll(".Country")
-                //     .transition()
-                //     .duration(200)
-                //     .style("opacity", .8)
-
-                d3.select(this)
-                    .transition()
-                    .duration(200)
-                    .style("stroke", "transparent")
+            const mousemove = function (event, d) {
+                console.log(d)
+                tooltip
+                    .html(`
+                        Subzone: <span style="text-transform: capitalize;"> ${d[0]}</span> <br/>
+                        Population: ${d[1]}
+                    `)
+                    .style("left", event.x + "px")
+                    .style("top", event.y + "px")
+            }
+            const mouseleave = function (event, d) {
+                // tooltip
+                //     .style("opacity", 0)
             }
 
             // Draw the map
@@ -109,56 +143,61 @@
                 })
                 .style("stroke", "black")
                 .attr("class", "Country")
+                .style("opacity", .8)
+                .data(data)
+                .on("mouseover", mouseover)
+                .on("mousemove", mousemove)
+                .on("mouseleave", mouseleave)
+
+            //legend
+            const legendRectLocationY = 15;
+            const legendRectHeight = 15;
+            let legend = svg.append("g")
+                .attr("id", "legend")
+                .classed("legend", true)
+                .attr("transform", "translate(" + (margin.right - 40) + "," + legendRectLocationY + ")");
+
+            legend.selectAll("rect")
+                //Ref: https://stackoverflow.com/questions/48161257/understanding-invertextent-in-a-threshold-scale
+                //invertExtent() returns the extent of values in the domain [x0, x1] for the corresponding value in 
+                //the range, representing the inverse mapping from range to domain.
+                //d = [color1, color2] => d[0], d[1] for each segment or "rect" in colorScale
+                //For each "d" which is an array of 2 colors, use color.invertExtent(d) to get the corresponding 
+                //min and max value (or extent of values) in the domain. 
+                //Need conditional statements because first and last values of range can be undefined 
+                //(e.g. [undefined, 0] and [1, undefined]
+                .data(colorScale.range().map(d => {
+                    d = colorScale.invertExtent(d);
+                    if (d[0] == null) d[0] = x.domain()[0];
+                    if (d[1] == null) d[1] = x.domain()[1];
+                    return d;
+                }))
+                .enter()
+                .append("rect")
+                .attr("height", legendRectHeight)
+                .attr("x", d => x(d[0]))
+                .attr("y", legendRectLocationY)
+                .attr("width", d => x(d[1]) - x(d[0]))
+                .attr("fill", d => colorScale(d[0]))
+
+            //legend text label
+            legend.append("text")
+                .attr("class", "legend-label")
+                .attr("x", x.range()[0])
+                .attr("y", legendRectLocationY - 5)
+                .attr("fill", "#000")
+                .attr("font-size", "8px")
+                .attr("text-anchor", "start")
+                .text("Population Size")
+
+            //legend axis
+            legend.append("g")
+                .classed("legendAxis", true)
+                .style("font-size", 8)
+                .attr("transform", "translate(0," + legendRectLocationY + ")")
+                .call(legendAxis);
         })
 
-        function getColor(d) {
-            var dataRow = countryById.get(d.properties.name);
-            if (dataRow) {
-                console.log(dataRow);
-                return colorScale(dataRow.mortality);
-            } else {
-                console.log("no dataRow", d);
-                return "#ccc";
-            }
-        }
-        function loaded(error, usa, mortality) {
-
-            console.log(usa);
-            console.log(mortality);
-
-            colorScale.domain(d3.extent(mortality, function (d) { return d.mortality; }));
-
-            var states = topojson.feature(usa, usa.objects.units).features;
-
-            svg.selectAll('path.states')
-                .data(states)
-                .enter()
-                .append('path')
-                .attr('class', 'states')
-                .attr('d', path)
-                .on('mouseover', tip.show)
-                .on('mouseout', tip.hide)
-                .attr('fill', function (d, i) {
-                    console.log(d.properties.name);
-                    return getColor(d);
-                })
-                .append("title");
-
-            var linear = colorScale;
-
-            svg.append("g")
-                .attr("class", "legendLinear")
-                .attr("transform", "translate(20,20)");
-
-            var legendLinear = d3.legend.color()
-                .shapeWidth(30)
-                .orient('horizontal')
-                .scale(linear);
-
-            svg.select(".legendLinear")
-                .call(legendLinear);
-
-        }
 
 
     </script>
